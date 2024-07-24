@@ -89,6 +89,26 @@ func TestFuncJob(t *testing.T) {
 	}
 }
 
+func TestFuncWithDynamicSizeJob(t *testing.T) {
+	pool := NewFuncWithDynamicSize(10, 20, func(in interface{}) interface{} {
+		intVal := in.(int)
+		return intVal * 2
+	})
+	defer pool.Close()
+
+	atomic.StoreInt64(&pool.queuedJobs, 100)
+	time.Sleep(150 * time.Millisecond)
+	if len(pool.workers) != 20 {
+		t.Errorf("Wrong size of pool: %v != %v", len(pool.workers), 20)
+	}
+
+	atomic.StoreInt64(&pool.queuedJobs, 0)
+	time.Sleep(150 * time.Millisecond)
+	if len(pool.workers) != 10 {
+		t.Errorf("Wrong size of pool: %v != %v", len(pool.workers), 20)
+	}
+}
+
 func TestFuncJobTimed(t *testing.T) {
 	pool := NewFunc(10, func(in interface{}) interface{} {
 		intVal := in.(int)

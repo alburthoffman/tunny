@@ -36,6 +36,7 @@ var (
 	ErrJobNotFunc     = errors.New("generic worker not given a func()")
 	ErrWorkerClosed   = errors.New("worker was closed")
 	ErrJobTimedOut    = errors.New("job request timed out")
+	ErrRetry          = errors.New("job failed, retry")
 )
 
 // Worker is an interface representing a Tunny working agent. It will be used to
@@ -100,15 +101,22 @@ func (w *callbackWorker) Terminate()       {}
 
 //------------------------------------------------------------------------------
 
+type Range struct {
+	Min int
+	Max int
+}
+
 // Pool is a struct that manages a collection of workers, each with their own
 // goroutine. The Pool can initialize, expand, compress and close the workers,
 // as well as processing jobs with the workers synchronously.
 type Pool struct {
+	sizeRange  *Range
 	queuedJobs int64
 
 	ctor    func() Worker
 	workers []*workerWrapper
 	reqChan chan workRequest
+	done    chan struct{}
 
 	workerMut sync.Mutex
 }
@@ -121,6 +129,7 @@ func New(n int, ctor func() Worker) *Pool {
 	p := &Pool{
 		ctor:    ctor,
 		reqChan: make(chan workRequest),
+		done:    make(chan struct{}),
 	}
 	p.SetSize(n)
 
@@ -135,6 +144,33 @@ func NewFunc(n int, f func(interface{}) interface{}) *Pool {
 			processor: f,
 		}
 	})
+}
+
+// NewFuncWithDynamicSize creates a new Pool of workers where each worker will
+func NewFuncWithDynamicSize(min int, max int, f func(interface{}) interface{}) *Pool {
+	p := NewFunc(min, f)
+	p.sizeRange = &Range{Min: min, Max: max}
+	go p.resizeLoop()
+	return p
+}
+
+// NewFuncWithDynamicSizeAndRetry creates a new Pool of workers where each worker will
+func NewFuncWithDynamicSizeAndRetry(min, max, maxRetry int, bakeTime time.Duration, f func(interface{}) (interface{}, error)) *Pool {
+	p := NewFunc(min, func(payload interface{}) interface{} {
+		for i := 0; i < maxRetry; i++ {
+			r, err := f(payload)
+			if err != ErrRetry {
+				return r
+			}
+			time.Sleep(bakeTime)
+		}
+
+		// when maxRetry is reached, return nil
+		return nil
+	})
+	p.sizeRange = &Range{Min: min, Max: max}
+	go p.resizeLoop()
+	return p
 }
 
 // NewCallback creates a new Pool of workers where workers cast the job payload
@@ -300,10 +336,41 @@ func (p *Pool) GetSize() int {
 	return len(p.workers)
 }
 
+func (p *Pool) resizeLoop() {
+	for {
+		if p.sizeRange == nil {
+			return
+		}
+
+		size := int(p.QueueLength())
+		if size < p.sizeRange.Min {
+			size = p.sizeRange.Min
+		}
+
+		if size > p.sizeRange.Max {
+			size = p.sizeRange.Max
+		}
+
+		open := true
+		select {
+		case _, open = <-p.done:
+			if !open {
+				return
+			}
+
+		default:
+		}
+
+		p.SetSize(size)
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // Close will terminate all workers and close the job channel of this Pool.
 func (p *Pool) Close() {
 	p.SetSize(0)
 	close(p.reqChan)
+	close(p.done)
 }
 
 //------------------------------------------------------------------------------

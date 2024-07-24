@@ -14,13 +14,13 @@ create a pool with a size that matches your CPU count.
 ## Install
 
 ``` sh
-go get github.com/Jeffail/tunny
+go get github.com/alburthoffman/tunny
 ```
 
 Or, using dep:
 
 ``` sh
-dep ensure -add github.com/Jeffail/tunny
+dep ensure -add github.com/alburthoffman/tunny
 ```
 
 ## Use

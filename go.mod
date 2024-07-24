@@ -1,3 +1,3 @@
-module github.com/Jeffail/tunny
+module github.com/alburthoffman/tunny
 
-go 1.13
+go 1.22
